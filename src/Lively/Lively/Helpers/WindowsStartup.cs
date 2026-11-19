@@ -2,7 +2,6 @@
 using System;
 using System.IO;
 using System.Reflection;
-using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Threading.Tasks;
 using Windows.ApplicationModel;
@@ -68,7 +67,7 @@ namespace Lively.Helpers
                 {
                     folder.DeleteTask(taskName, 0);
                 }
-                catch (COMException ex) when (ex.HResult == fileNotFound)
+                catch (Exception ex) when (ex.HResult == fileNotFound)
                 {
                 }
                 return;
