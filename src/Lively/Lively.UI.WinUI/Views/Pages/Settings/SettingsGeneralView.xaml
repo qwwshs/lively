@@ -33,6 +33,13 @@
                         <ToggleSwitch IsOn="{Binding IsStartup, Mode=TwoWay}" />
                     </controls:SettingsCard>
 
+                    <controls:SettingsCard x:Uid="HighPriorityStartup" IsEnabled="{Binding SupportsHighPriorityStartup}">
+                        <controls:SettingsCard.HeaderIcon>
+                            <FontIcon Glyph="&#xE768;" />
+                        </controls:SettingsCard.HeaderIcon>
+                        <ToggleSwitch IsEnabled="{Binding IsStartup}" IsOn="{Binding IsHighPriorityStartup, Mode=TwoWay}" />
+                    </controls:SettingsCard>
+
                     <controls:SettingsCard x:Uid="HideSysTray">
                         <controls:SettingsCard.HeaderIcon>
                             <FontIcon Glyph="&#xED35;" />

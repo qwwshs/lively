@@ -21,7 +21,7 @@ namespace Lively.Core
         Task ResetWallpaperAsync();
         Task RestartWallpaper();
         Task RestartWallpaper(DisplayMonitor display);
-        void RestoreWallpaper();
+        Task RestoreWallpaperAsync();
         void SendMessageWallpaper(string info_path, IpcMessage msg);
         void SendMessageWallpaper(DisplayMonitor display, string info_path, IpcMessage msg);
         Task SetWallpaperAsync(LibraryModel wallpaper, DisplayMonitor display);

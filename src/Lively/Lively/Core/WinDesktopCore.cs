@@ -41,6 +41,7 @@ namespace Lively.Core
         private IntPtr workerW, progman, shellDLL_DefView, original_WorkerW;
         public IntPtr DesktopWorkerW => workerW;
         private bool disposedValue;
+        private bool waitingForDesktop;
         private bool isRaisedDesktopWithLayeredShellView;
         /// <summary>
         /// Set wallpaper as child of WorkerW.
@@ -70,7 +71,7 @@ namespace Lively.Core
         private readonly RawInputMsgWindow rawInput;
         private readonly WndProcMsgWindow WndProc;
         private readonly IDisplayManager displayManager;
-        private readonly WindowEventHook workerWHook;
+        private WindowEventHook workerWHook;
 
         public WinDesktopCore(IUserSettingsService userSettings,
             IDisplayManager displayManager,
@@ -115,28 +116,9 @@ namespace Lively.Core
             this.rawInput.KeyboardClickRaw += RawInput_KeyboardClickRaw;
             this.screensaverIdleTimer.Elapsed += ScreensaverIdleTimer_Elapsed;
 
-            // Initialize desktop and update handles.
-            SetupDesktopLayer();
-
-            try
-            {
-                if (workerW != IntPtr.Zero)
-                {
-                    Logger.Info("Hooking WorkerW events..");
-                    var dwThreadId = NativeMethods.GetWindowThreadProcessId(workerW, out int dwProcessId);
-                    workerWHook = new WindowEventHook(WindowEvent.EVENT_OBJECT_DESTROY);
-                    workerWHook.HookToThread(dwThreadId);
-                    workerWHook.EventReceived += WorkerWHook_EventReceived;
-                }
-                else
-                {
-                    Logger.Error("Failed to initialize Core, WorkerW is NULL");
-                }
-            }
-            catch (Exception ex)
-            {
-                Logger.Error($"WorkerW hook failed: {ex.Message}");
-            }
+            // Explorer may still be starting when Lively is launched at sign-in.
+            if (DesktopUtil.GetDesktopSHELLDLL_DefView() != IntPtr.Zero)
+                SetupDesktopLayer();
 
             // Screensaver
             screensaverIdleTimer.Interval = screensaverIdleCheckTime;
@@ -245,6 +227,23 @@ namespace Lively.Core
             original_WorkerW = DesktopUtil.GetDesktopWorkerW();
 
             Logger.Info($"WorkerW initialized {workerW}");
+            if (workerWHook == null && workerW != IntPtr.Zero)
+            {
+                try
+                {
+                    var threadId = NativeMethods.GetWindowThreadProcessId(workerW, out _);
+                    var hook = new WindowEventHook(WindowEvent.EVENT_OBJECT_DESTROY);
+                    workerWHook = hook;
+                    hook.HookToThread(threadId);
+                    hook.EventReceived += WorkerWHook_EventReceived;
+                }
+                catch (Exception ex)
+                {
+                    workerWHook?.Dispose();
+                    workerWHook = null;
+                    Logger.Error($"WorkerW hook failed: {ex.Message}");
+                }
+            }
             WallpaperReset?.Invoke(this, EventArgs.Empty);
         }
 
@@ -560,7 +559,8 @@ namespace Lively.Core
 
         private void SetupDesktop_WallpaperChanged(object sender, EventArgs e)
         {
-            SaveWallpaperLayout();
+            if (!waitingForDesktop)
+                SaveWallpaperLayout();
         }
 
         readonly object layoutWriteLock = new object();
@@ -781,10 +781,30 @@ namespace Lively.Core
         /// <summary>
         /// Restore wallpaper from save.
         /// </summary>
-        public void RestoreWallpaper()
+        public async Task RestoreWallpaperAsync()
         {
             try
             {
+                // A logon task can run before Explorer creates the wallpaper host.
+                var startupTimeout = System.Diagnostics.Stopwatch.StartNew();
+                waitingForDesktop = !NativeMethods.IsWindow(workerW);
+                while (!disposedValue && !NativeMethods.IsWindow(workerW))
+                {
+                    if (DesktopUtil.GetDesktopSHELLDLL_DefView() != IntPtr.Zero)
+                        SetupDesktopLayer();
+                    if (NativeMethods.IsWindow(workerW))
+                        break;
+                    if (startupTimeout.Elapsed >= TimeSpan.FromMinutes(1))
+                    {
+                        Logger.Warn("The desktop wallpaper host did not become available after sign-in.");
+                        return;
+                    }
+                    await Task.Delay(250);
+                }
+                if (disposedValue)
+                    return;
+
+                waitingForDesktop = false;
                 var wallpaperLayout = userSettings.WallpaperLayout;
                 if (userSettings.Settings.WallpaperArrangement == WallpaperArrangement.span ||
                     userSettings.Settings.WallpaperArrangement == WallpaperArrangement.duplicate)
@@ -792,7 +812,7 @@ namespace Lively.Core
                     if (wallpaperLayout.Count != 0)
                     {
                         var libraryItem = wallpaperLibraryFactory.CreateFromDirectory(wallpaperLayout[0].LivelyInfoPath);
-                        SetWallpaperAsync(libraryItem, displayManager.PrimaryDisplayMonitor);
+                        await SetWallpaperAsync(libraryItem, displayManager.PrimaryDisplayMonitor);
                     }
                 }
                 else if (userSettings.Settings.WallpaperArrangement == WallpaperArrangement.per)
@@ -803,6 +823,10 @@ namespace Lively.Core
             catch (Exception e)
             {
                 Logger.Error($"Failed to restore wallpaper: {e}");
+            }
+            finally
+            {
+                waitingForDesktop = false;
             }
         }
 
@@ -994,6 +1018,12 @@ namespace Lively.Core
         {
             Logger.Info("WM_TASKBARCREATED: New taskbar created.");
             int newExplorerPid = GetTaskbarExplorerPid();
+            if (prevExplorerPid == 0)
+            {
+                prevExplorerPid = newExplorerPid;
+                return;
+            }
+
             if (prevExplorerPid != newExplorerPid)
             {
                 // Detect explorer crash because otherwise dpi change also sends WM_TASKBARCREATED.

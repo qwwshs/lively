@@ -274,6 +274,12 @@ If still not working, close &amp; start Lively again/restart windows.
   <data name="Startup.Description" xml:space="preserve">
     <value>Lively needs to run in the background for wallpaper playback</value>
   </data>
+  <data name="HighPriorityStartup.Header" xml:space="preserve">
+    <value>High-priority startup</value>
+  </data>
+  <data name="HighPriorityStartup.Description" xml:space="preserve">
+    <value>Desktop installation only. Starts Lively at sign-in and applies the wallpaper as soon as the desktop is ready.</value>
+  </data>
   <data name="Startup.Header" xml:space="preserve">
     <value>Start with Windows</value>
   </data>
