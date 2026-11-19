@@ -1,4 +1,4 @@
-﻿using Lively.Common;
+using Lively.Common;
 using Lively.Common.Com;
 using Lively.Common.Exceptions;
 using Lively.Common.Extensions;
@@ -196,6 +196,7 @@ namespace Lively.Core
             // We enumerate all Windows, until we find one, that has the SHELLDLL_DefView 
             // as a child. 
             // If we found that window, we take its next sibling and assign it to workerw.
+            workerW = IntPtr.Zero;
             NativeMethods.EnumWindows(new NativeMethods.EnumWindowsProc((tophandle, topparamhandle) =>
             {
                 IntPtr p = NativeMethods.FindWindowEx(tophandle,
@@ -210,7 +211,6 @@ namespace Lively.Core
                                                     tophandle,
                                                     "WorkerW",
                                                     IntPtr.Zero);
-                    shellDLL_DefView = p;
                 }
 
                 return true;
@@ -218,6 +218,8 @@ namespace Lively.Core
 
             if (isRaisedDesktopWithLayeredShellView)
             {
+                shellDLL_DefView = NativeMethods.FindWindowEx(progman, IntPtr.Zero, "SHELLDLL_DefView", IntPtr.Zero);
+
                 // Spy++ output
                 // 0x000100EC "Program Manager" Progman
                 //   0x000100EE "" SHELLDLL_DefView
@@ -257,20 +259,7 @@ namespace Lively.Core
             {
                 SetupDesktopLayer();
 
-                var windowFlags = (int)(NativeMethods.SetWindowPosFlags.SWP_NOMOVE |
-                    NativeMethods.SetWindowPosFlags.SWP_NOSIZE |
-                    NativeMethods.SetWindowPosFlags.SWP_NOACTIVATE);
-
-                foreach (var item in wallpapers)
-                {
-                    NativeMethods.SetWindowPos(item.Handle,
-                        (int)shellDLL_DefView,
-                        0,
-                        0,
-                        0,
-                        0,
-                        windowFlags);
-                }
+                UpdateWallpaperRect();
                 EnsureWorkerWZOrder();
             }
             else
@@ -321,8 +310,7 @@ namespace Lively.Core
                                 currentWallpaper.Loaded += Wallpaper_Loaded;
                                 await currentWallpaper.ShowAsync();
 
-                                if (!TrySetWallpaperPerScreen(currentWallpaper.Handle, currentWallpaper.Screen))
-                                    Logger.Error("Failed to set wallpaper as child of WorkerW");
+                                SetWallpaperWindow(currentWallpaper.Handle, currentWallpaper.Screen.Bounds);
 
                                 // Reload incase page does not handle resize event
                                 if (currentWallpaper.Category.IsWebWallpaper())
@@ -343,8 +331,7 @@ namespace Lively.Core
                                 currentWallpaper.Loaded += Wallpaper_Loaded;
                                 await currentWallpaper.ShowAsync();
 
-                                if (!TrySetWallpaperSpanScreen(currentWallpaper.Handle))
-                                    Logger.Error("Failed to set wallpaper as child of WorkerW");
+                                SetWallpaperWindow(currentWallpaper.Handle, displayManager.VirtualScreenBounds);
 
                                 if (currentWallpaper.Category.IsWebWallpaper())
                                     currentWallpaper.SetPlaybackPos(0, PlaybackPosType.absolutePercent);
@@ -366,8 +353,7 @@ namespace Lively.Core
                                     currentWallpaper.Loaded += Wallpaper_Loaded;
                                     await currentWallpaper.ShowAsync();
 
-                                    if (!TrySetWallpaperPerScreen(currentWallpaper.Handle, currentWallpaper.Screen))
-                                        Logger.Error("Failed to set wallpaper as child of WorkerW");
+                                    SetWallpaperWindow(currentWallpaper.Handle, currentWallpaper.Screen.Bounds);
 
                                     if (currentWallpaper.Category.IsWebWallpaper())
                                         currentWallpaper.SetPlaybackPos(0, PlaybackPosType.absolutePercent);
@@ -391,6 +377,7 @@ namespace Lively.Core
                             }
                             break;
                     }
+                    RefreshDesktop();
                     WallpaperChanged?.Invoke(this, EventArgs.Empty);
                 }
                 catch (WallpaperPluginFactory.MsixNotAllowedException ex1)
@@ -507,72 +494,6 @@ namespace Lively.Core
                     Logger.Error($"Failed to set lockscreen/desktop wallpaper: {ie2.Message}");
                 }
             }
-        }
-
-        /// <summary>
-        /// Calculates the position of window w.r.t parent workerw handle & sets it as child window to it.
-        /// </summary>
-        /// <param name="handle">window handle of process to add as wallpaper</param>
-        /// <param name="display">displaystring of display to sent wp to.</param>
-        private bool TrySetWallpaperPerScreen(IntPtr handle, DisplayMonitor targetDisplay)
-        {
-            Logger.Info($"Sending wallpaper(Screen): {targetDisplay.DeviceName} | {targetDisplay.Bounds}");
-
-            var prct = new NativeMethods.RECT();
-            //Position the wp fullscreen to corresponding display.
-            if (!NativeMethods.SetWindowPos(
-                handle,
-                1,
-                targetDisplay.Bounds.X,
-                targetDisplay.Bounds.Y,
-                (targetDisplay.Bounds.Width),
-                (targetDisplay.Bounds.Height),
-                (int)NativeMethods.SetWindowPosFlags.SWP_NOACTIVATE))
-            {
-                Logger.Info(LogUtil.GetWin32Error("Failed to set perscreen wallpaper(1)"));
-            }
-
-            NativeMethods.MapWindowPoints(handle, workerW, ref prct, 2);
-            var success = TryAttachToDesktop(handle);
-
-            //Position the wp window relative to the new parent window(workerw).
-            if (!NativeMethods.SetWindowPos(handle,
-                1,
-                prct.Left,
-                prct.Top,
-                (targetDisplay.Bounds.Width),
-                (targetDisplay.Bounds.Height),
-                (int)(NativeMethods.SetWindowPosFlags.SWP_NOACTIVATE | NativeMethods.SetWindowPosFlags.SWP_NOZORDER)))
-            {
-                Logger.Info(LogUtil.GetWin32Error("Failed to set perscreen wallpaper(2)"));
-            }
-            RefreshDesktop();
-            return success;
-        }
-
-        /// <summary>
-        /// Spans wp across all screens.
-        /// </summary>
-        private bool TrySetWallpaperSpanScreen(IntPtr handle)
-        {
-            //get spawned workerw rectangle data.
-            NativeMethods.GetWindowRect(workerW, out NativeMethods.RECT prct);
-            var success = TryAttachToDesktop(handle);
-
-            //fill wp into the whole workerw area.
-            Logger.Info($"Sending wallpaper(Span): ({prct.Left}, {prct.Top}, {prct.Right - prct.Left}, {prct.Bottom - prct.Top}).");
-            if (!NativeMethods.SetWindowPos(handle,
-                                            1,
-                                            0,
-                                            0,
-                                            prct.Right - prct.Left,
-                                            prct.Bottom - prct.Top,
-                                            (int)(NativeMethods.SetWindowPosFlags.SWP_NOACTIVATE | NativeMethods.SetWindowPosFlags.SWP_NOZORDER)))
-            {
-                Logger.Info(LogUtil.GetWin32Error("Failed to set span wallpaper"));
-            }
-            RefreshDesktop();
-            return success;
         }
 
         /// <summary>
@@ -764,51 +685,23 @@ namespace Lively.Core
 
         private void UpdateWallpaperRect()
         {
-            if (displayManager.IsMultiScreen() && userSettings.Settings.WallpaperArrangement == WallpaperArrangement.span)
+            var span = userSettings.Settings.WallpaperArrangement == WallpaperArrangement.span;
+            foreach (var wallpaper in wallpapers)
             {
-                if (wallpapers.Count != 0)
-                {
-                    //Wallpapers[0].Play();
-                    var screenArea = displayManager.VirtualScreenBounds;
-                    Logger.Info($"Updating wallpaper rect(Span): ({screenArea.Width}, {screenArea.Height}).");
-                    //For play/pause, setting the new metadata.
-                    Wallpapers[0].Screen = displayManager.PrimaryDisplayMonitor;
-                    if (!NativeMethods.SetWindowPos(Wallpapers[0].Handle,
-                        1,
-                        0,
-                        0,
-                        screenArea.Width,
-                        screenArea.Height,
-                        (int)(NativeMethods.SetWindowPosFlags.SWP_NOACTIVATE | NativeMethods.SetWindowPosFlags.SWP_NOZORDER)))
-                    {
-                        Logger.Info(LogUtil.GetWin32Error("Failed to update wallpaper rect."));
-                    }
-                }
-            }
-            else
-            {
-                int i;
-                foreach (var screen in displayManager.DisplayMonitors.ToList())
-                {
-                    if ((i = wallpapers.FindIndex(x => x.Screen.Equals(screen))) != -1)
-                    {
-                        //Wallpapers[i].Play();
-                        Logger.Info($"Updating wallpaper rect(Screen): {Wallpapers[i].Screen.Bounds} -> {screen.Bounds}.");
-                        //For play/pause, setting the new metadata.
-                        Wallpapers[i].Screen = screen;
+                var screen = span
+                    ? displayManager.PrimaryDisplayMonitor
+                    : displayManager.DisplayMonitors.FirstOrDefault(x => x.Equals(wallpaper.Screen));
+                if (screen == null)
+                    continue;
 
-                        var screenArea = displayManager.VirtualScreenBounds;
-                        if (!NativeMethods.SetWindowPos(Wallpapers[i].Handle,
-                            1,
-                            (screen.Bounds.X - screenArea.Location.X),
-                            (screen.Bounds.Y - screenArea.Location.Y),
-                            (screen.Bounds.Width),
-                            (screen.Bounds.Height),
-                            (int)(NativeMethods.SetWindowPosFlags.SWP_NOACTIVATE | NativeMethods.SetWindowPosFlags.SWP_NOZORDER)))
-                        {
-                            Logger.Info(LogUtil.GetWin32Error("Failed to update wallpaper rect."));
-                        }
-                    }
+                wallpaper.Screen = screen;
+                try
+                {
+                    SetWallpaperWindow(wallpaper.Handle, span ? displayManager.VirtualScreenBounds : screen.Bounds);
+                }
+                catch (WorkerWException ex)
+                {
+                    Logger.Error(ex);
                 }
             }
             RefreshDesktop();
@@ -1034,45 +927,44 @@ namespace Lively.Core
             NativeMethods.SystemParametersInfo(NativeMethods.SPI_SETDESKWALLPAPER, 0, null, NativeMethods.SPIF_UPDATEINIFILE);
         }
 
-        private bool TryAttachToDesktop(IntPtr hwnd)
+        private void SetWallpaperWindow(IntPtr hwnd, System.Drawing.Rectangle bounds)
         {
-            if (IsWindows7)
+            var useLayeredDesktop = isRaisedDesktopWithLayeredShellView && !isWorkerWParent;
+            var parent = IsWindows7 || useLayeredDesktop ? progman : workerW;
+            if (!NativeMethods.IsWindow(parent) ||
+                (useLayeredDesktop && NativeMethods.GetAncestor(shellDLL_DefView, NativeMethods.GetAncestorFlags.GetParent) != parent))
             {
-                if (!WindowUtil.TrySetParent(hwnd, progman))
-                    return false;
+                throw new WorkerWException("The desktop wallpaper host is unavailable.");
             }
-            else
+
+            if (!WindowUtil.TrySetChildWindowStyle(hwnd))
+                throw new WorkerWException("Failed to apply child window styles to the wallpaper.");
+            if (useLayeredDesktop && !WindowUtil.HasExtendedStyle(hwnd, NativeMethods.WindowStyles.WS_EX_LAYERED))
             {
-                if (isRaisedDesktopWithLayeredShellView && !isWorkerWParent)
-                {
-                    WindowUtil.SetWindowStyle(hwnd, NativeMethods.WindowStyles.WS_CHILD);
-                    // Adds WS_EX_LAYERED if required.
-                    // Note: Godot fails to apply WS_EX_LAYERED if attached after SetParent.
-                    WindowUtil.SetWindowTransparency(hwnd, 255);
-
-                    if (!WindowUtil.TrySetParent(hwnd, progman))
-                        return false;
-
-                    var windowFlags = (int)(NativeMethods.SetWindowPosFlags.SWP_NOMOVE
-                        | NativeMethods.SetWindowPosFlags.SWP_NOSIZE
-                        | NativeMethods.SetWindowPosFlags.SWP_NOACTIVATE);
-
-                    NativeMethods.SetWindowPos(hwnd,
-                        (int)shellDLL_DefView,
-                        0,
-                        0,
-                        0,
-                        0,
-                        windowFlags);
-                    EnsureWorkerWZOrder();
-                }
-                else
-                {
-                    if (!WindowUtil.TrySetParent(hwnd, workerW))
-                        return false;
-                }
+                // Apply layering before SetParent for players such as Godot.
+                WindowUtil.SetWindowTransparency(hwnd, 255);
             }
-            return true;
+
+            if (NativeMethods.GetAncestor(hwnd, NativeMethods.GetAncestorFlags.GetParent) != parent)
+                WindowUtil.TrySetParent(hwnd, parent);
+
+            if (NativeMethods.GetAncestor(hwnd, NativeMethods.GetAncestorFlags.GetParent) != parent)
+                throw new WorkerWException("Failed to attach the wallpaper to the desktop host.");
+
+            var position = bounds.Location;
+            NativeMethods.MapWindowPoints(IntPtr.Zero, parent, ref position, 1);
+
+            var flags = NativeMethods.SetWindowPosFlags.SWP_NOACTIVATE | NativeMethods.SetWindowPosFlags.SWP_FRAMECHANGED;
+            var insertAfter = (int)NativeMethods.HWNDInsertAfter.HWND_BOTTOM;
+            if (useLayeredDesktop)
+                insertAfter = (int)shellDLL_DefView;
+            else if (!IsWindows7)
+                flags |= NativeMethods.SetWindowPosFlags.SWP_NOZORDER;
+
+            if (!NativeMethods.SetWindowPos(hwnd, insertAfter, position.X, position.Y, bounds.Width, bounds.Height, (int)flags))
+                throw new WorkerWException(LogUtil.GetWin32Error("Failed to position the wallpaper"));
+
+            EnsureWorkerWZOrder();
         }
 
         private void EnsureWorkerWZOrder()
@@ -1080,7 +972,8 @@ namespace Lively.Core
             if (!isRaisedDesktopWithLayeredShellView || isWorkerWParent)
                 return;
 
-            if (WindowUtil.GetLastChildWindow(progman) != workerW)
+            if (NativeMethods.IsWindow(workerW) &&
+                NativeMethods.GetWindow(workerW, NativeMethods.GetWindowType.GW_HWNDLAST) != workerW)
             {
                 Logger.Error("Unexpected WorkerW Z-order.");
                 var windowFlags = (int)(NativeMethods.SetWindowPosFlags.SWP_NOMOVE

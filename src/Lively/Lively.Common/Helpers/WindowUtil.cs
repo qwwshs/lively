@@ -196,6 +196,25 @@ namespace Lively.Common.Helpers
             return NativeMethods.SetParent(child, parent) != IntPtr.Zero;
         }
 
+        public static bool TrySetChildWindowStyle(IntPtr hwnd)
+        {
+            const int styleIndex = (int)NativeMethods.GWL.GWL_STYLE;
+            const uint frameStyles = NativeMethods.WindowStyles.WS_POPUP |
+                                     NativeMethods.WindowStyles.WS_CAPTION |
+                                     NativeMethods.WindowStyles.WS_THICKFRAME |
+                                     NativeMethods.WindowStyles.WS_SYSMENU |
+                                     NativeMethods.WindowStyles.WS_MINIMIZEBOX |
+                                     NativeMethods.WindowStyles.WS_MAXIMIZEBOX;
+            var currentStyle = unchecked((uint)NativeMethods.GetWindowLongPtr(hwnd, styleIndex).ToInt64());
+            var childStyle = (currentStyle & ~frameStyles) | NativeMethods.WindowStyles.WS_CHILD;
+            if (currentStyle == childStyle)
+                return true;
+
+            NativeMethods.SetWindowLongPtr(new HandleRef(null, hwnd), styleIndex, new IntPtr(unchecked((int)childStyle)));
+            var appliedStyle = unchecked((uint)NativeMethods.GetWindowLongPtr(hwnd, styleIndex).ToInt64());
+            return (appliedStyle & (frameStyles | NativeMethods.WindowStyles.WS_CHILD)) == NativeMethods.WindowStyles.WS_CHILD;
+        }
+
         public static IntPtr GetLastChildWindow(IntPtr parent)
         {
             IntPtr lastChild = IntPtr.Zero;
