@@ -172,11 +172,6 @@ namespace Lively
                 // Custom theme resources are not this early, make sure not to call any window or control using it.
                 _ = screenSaverService.StartAsync(false);
             }
-            else
-            {
-                // Restore wallpaper(s) from previous run.
-                Services.GetRequiredService<IDesktopCore>().RestoreWallpaper();
-            }
 
             // First run setup wizard show.
             if (userSettings.Settings.IsFirstRun)
@@ -185,11 +180,13 @@ namespace Lively
             if (userSettings.Settings.SystemTaskbarTheme != TaskbarTheme.none)
                 Services.GetRequiredService<ITransparentTbService>().Start(userSettings.Settings.SystemTaskbarTheme);
 
-            _ = WindowsStartup.TrySetStartup(userSettings.Settings.Startup);
+            _ = WindowsStartup.TrySetStartup(userSettings.Settings.Startup, userSettings.Settings.HighPriorityStartup);
 
             // Need to load theme later stage of startup to update.
             this.Startup += (s, e) => {
                 ChangeTheme(userSettings.Settings.ApplicationTheme);
+                if (!IsExclusiveScreensaverMode)
+                    _ = Services.GetRequiredService<IDesktopCore>().RestoreWallpaperAsync();
             };
 
             //Ref: https://github.com/Kinnara/ModernWpf/blob/master/ModernWpf/Helpers/ColorsHelper.cs

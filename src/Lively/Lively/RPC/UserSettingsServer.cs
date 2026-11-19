@@ -86,10 +86,12 @@ namespace Lively.RPC
         public override Task<Empty> SetSettings(SettingsDataModel req, ServerCallContext context)
         {
             bool restartRequired = (Models.Enums.AppTheme)req.ApplicationTheme != userSettings.Settings.ApplicationTheme;// || req.Language != userSettings.Settings.Language;
-            if (req.Startup != userSettings.Settings.Startup)
+            var highPriorityStartup = req.HasHighPriorityStartup ? req.HighPriorityStartup : userSettings.Settings.HighPriorityStartup;
+            if (req.Startup != userSettings.Settings.Startup || highPriorityStartup != userSettings.Settings.HighPriorityStartup)
             {
                 userSettings.Settings.Startup = req.Startup;
-                _ = WindowsStartup.TrySetStartup(userSettings.Settings.Startup);
+                userSettings.Settings.HighPriorityStartup = highPriorityStartup;
+                _ = WindowsStartup.TrySetStartup(req.Startup, highPriorityStartup);
             }
 
             if (req.Language != userSettings.Settings.Language)
@@ -259,6 +261,7 @@ namespace Lively.RPC
                 ScreensaverArrangement = (WallpaperArrangementRule)settings.ScreensaverArragement,
                 ScreensaverType = (ScreensaverTypeRule)settings.ScreensaverType,
                 Startup = settings.Startup,
+                HighPriorityStartup = settings.HighPriorityStartup,
                 IsFirstRun = settings.IsFirstRun,
                 ControlPanelOpened = settings.ControlPanelOpened,
                 AppFocusPause = (Grpc.Common.Proto.Settings.AppRules)((int)settings.AppFocusPause),

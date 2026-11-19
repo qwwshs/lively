@@ -111,7 +111,7 @@ namespace Lively.Commandline
 
             if (opts.Startup != null)
             {
-                _ = await WindowsStartup.TrySetStartup((bool)opts.Startup);
+                _ = await WindowsStartup.TrySetStartup((bool)opts.Startup, userSettings.Settings.HighPriorityStartup);
             }
 
             if (opts.ShowIcons != null)

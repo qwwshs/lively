@@ -1,6 +1,7 @@
 ﻿using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Lively.Common;
+using Lively.Common.Helpers;
 using Lively.Common.Helpers.Files;
 using Lively.Common.Services;
 using Lively.Grpc.Client;
@@ -48,6 +49,7 @@ namespace Lively.UI.Shared.ViewModels
                 Languages[0] : Languages.FirstOrDefault(x => x.Code == userSettings.Settings.Language) ?? Languages[0];
 
             IsStartup = userSettings.Settings.Startup;
+            IsHighPriorityStartup = userSettings.Settings.HighPriorityStartup;
             WallpaperDirectory = userSettings.Settings.WallpaperDir;
             IsSysTrayIconVisible = userSettings.Settings.SysTrayIcon;
             GlobalWallpaperVolume = userSettings.Settings.AudioVolumeGlobal;
@@ -72,6 +74,23 @@ namespace Lively.UI.Shared.ViewModels
                     UpdateSettingsConfigFile();
                 }
                 SetProperty(ref _isStartup, value);
+            }
+        }
+
+        public bool SupportsHighPriorityStartup => !PackageUtil.IsRunningAsPackaged;
+
+        private bool _isHighPriorityStartup;
+        public bool IsHighPriorityStartup
+        {
+            get => _isHighPriorityStartup;
+            set
+            {
+                if (userSettings.Settings.HighPriorityStartup != value)
+                {
+                    userSettings.Settings.HighPriorityStartup = value;
+                    UpdateSettingsConfigFile();
+                }
+                SetProperty(ref _isHighPriorityStartup, value);
             }
         }
 

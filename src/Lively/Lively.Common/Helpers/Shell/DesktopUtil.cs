@@ -54,7 +54,7 @@ namespace Lively.Common.Helpers.Shell
             var hShellViewWin = IntPtr.Zero;
             var hWorkerW = IntPtr.Zero;
 
-            var hProgman = NativeMethods.FindWindow("Progman", "Program Manager");
+            var hProgman = GetProgman();
             var hDesktopWnd = NativeMethods.GetDesktopWindow();
 
             // If the main Program Manager window is found

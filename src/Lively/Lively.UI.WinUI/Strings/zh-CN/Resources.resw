@@ -274,6 +274,12 @@ Windows 7 系统只需设置“调整为最佳外观”&amp; 并应用。
   <data name="Startup.Description" xml:space="preserve">
     <value>Lively 需要在后台运行以播放壁纸。</value>
   </data>
+  <data name="HighPriorityStartup.Header" xml:space="preserve">
+    <value>高优先级启动</value>
+  </data>
+  <data name="HighPriorityStartup.Description" xml:space="preserve">
+    <value>仅适用于桌面安装版。登录时提前启动 Lively，桌面就绪后立即应用壁纸。</value>
+  </data>
   <data name="Startup.Header" xml:space="preserve">
     <value>开机自启动</value>
   </data>

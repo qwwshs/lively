@@ -10,6 +10,7 @@ namespace Lively.Models
         public string AppPreviousVersion { get; set; }
         public string Language { get; set; }
         public bool Startup { get; set; }
+        public bool HighPriorityStartup { get; set; }
         /// <summary>
         /// Add user opened wallpapers to library.
         /// </summary>
