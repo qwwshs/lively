@@ -72,6 +72,8 @@ namespace Lively.Core
         private readonly WndProcMsgWindow WndProc;
         private readonly IDisplayManager displayManager;
         private WindowEventHook workerWHook;
+        private uint workerHookThread;
+        private readonly System.Windows.Threading.DispatcherTimer placementTimer = new() { Interval = TimeSpan.FromSeconds(1) };
 
         public WinDesktopCore(IUserSettingsService userSettings,
             IDisplayManager displayManager,
@@ -115,6 +117,7 @@ namespace Lively.Core
             this.rawInput.MouseUpRaw += RawInput_MouseUpRaw;
             this.rawInput.KeyboardClickRaw += RawInput_KeyboardClickRaw;
             this.screensaverIdleTimer.Elapsed += ScreensaverIdleTimer_Elapsed;
+            placementTimer.Tick += CheckWallpaperPlacement;
 
             // Explorer may still be starting when Lively is launched at sign-in.
             if (DesktopUtil.GetDesktopSHELLDLL_DefView() != IntPtr.Zero)
@@ -227,11 +230,13 @@ namespace Lively.Core
             original_WorkerW = DesktopUtil.GetDesktopWorkerW();
 
             Logger.Info($"WorkerW initialized {workerW}");
-            if (workerWHook == null && workerW != IntPtr.Zero)
+            var threadId = NativeMethods.GetWindowThreadProcessId(workerW, out _);
+            if (threadId != 0 && (workerWHook == null || workerHookThread != threadId))
             {
                 try
                 {
-                    var threadId = NativeMethods.GetWindowThreadProcessId(workerW, out _);
+                    workerWHook?.Dispose();
+                    workerHookThread = (uint)threadId;
                     var hook = new WindowEventHook(WindowEvent.EVENT_OBJECT_DESTROY);
                     workerWHook = hook;
                     hook.HookToThread(threadId);
@@ -951,6 +956,70 @@ namespace Lively.Core
             NativeMethods.SystemParametersInfo(NativeMethods.SPI_SETDESKWALLPAPER, 0, null, NativeMethods.SPIF_UPDATEINIFILE);
         }
 
+        private void CheckWallpaperPlacement(object sender, EventArgs e)
+        {
+            if (wallpapers.Count == 0)
+            {
+                placementTimer.Stop();
+                return;
+            }
+            if (!semaphoreSlimWallpaperLoadingLock.Wait(0))
+                return;
+            try
+            {
+                var layered = isRaisedDesktopWithLayeredShellView && !isWorkerWParent;
+                if (!NativeMethods.IsWindow(workerW) || (layered && !NativeMethods.IsWindow(shellDLL_DefView)))
+                {
+                    if (DesktopUtil.GetDesktopSHELLDLL_DefView() == IntPtr.Zero)
+                        return;
+                    SetupDesktopLayer();
+                    if (!NativeMethods.IsWindow(workerW))
+                        return;
+                    layered = isRaisedDesktopWithLayeredShellView && !isWorkerWParent;
+                }
+                var parent = layered || IsWindows7 ? progman : workerW;
+                foreach (var wallpaper in wallpapers.ToArray())
+                {
+                    var hwnd = wallpaper.Handle;
+                    if (!NativeMethods.IsWindow(hwnd))
+                        continue;
+                    var bounds = userSettings.Settings.WallpaperArrangement == WallpaperArrangement.span
+                        ? displayManager.VirtualScreenBounds : wallpaper.Screen.Bounds;
+                    var style = (uint)NativeMethods.GetWindowLongPtr(hwnd, (int)NativeMethods.GWL.GWL_STYLE).ToInt64();
+                    const uint styles = NativeMethods.WindowStyles.WS_CHILD | NativeMethods.WindowStyles.WS_POPUP |
+                        NativeMethods.WindowStyles.WS_CAPTION | NativeMethods.WindowStyles.WS_THICKFRAME;
+                    if (NativeMethods.GetWindowRect(hwnd, out var rect) == 0)
+                        continue;
+                    bool iconsAbove = !layered;
+                    for (var sibling = hwnd; layered && sibling != IntPtr.Zero;
+                         sibling = NativeMethods.GetWindow(sibling, NativeMethods.GetWindowType.GW_HWNDPREV))
+                    {
+                        if (sibling == shellDLL_DefView)
+                        {
+                            iconsAbove = true;
+                            break;
+                        }
+                    }
+                    if (iconsAbove && NativeMethods.GetAncestor(hwnd, NativeMethods.GetAncestorFlags.GetParent) == parent &&
+                        (style & styles) == NativeMethods.WindowStyles.WS_CHILD &&
+                        rect.Left == bounds.Left && rect.Top == bounds.Top && rect.Right == bounds.Right && rect.Bottom == bounds.Bottom)
+                        continue;
+
+                    Logger.Info($"Restoring wallpaper placement: hwnd={hwnd}, rect=({rect.Left},{rect.Top},{rect.Right},{rect.Bottom}), expected={bounds}, style={style:X8}, iconsAbove={iconsAbove}");
+                    SetWallpaperWindow(hwnd, bounds);
+                }
+                EnsureWorkerWZOrder();
+            }
+            catch (WorkerWException ex)
+            {
+                Logger.Warn(ex);
+            }
+            finally
+            {
+                semaphoreSlimWallpaperLoadingLock.Release();
+            }
+        }
+
         private void SetWallpaperWindow(IntPtr hwnd, System.Drawing.Rectangle bounds)
         {
             var useLayeredDesktop = isRaisedDesktopWithLayeredShellView && !isWorkerWParent;
@@ -989,6 +1058,7 @@ namespace Lively.Core
                 throw new WorkerWException(LogUtil.GetWin32Error("Failed to position the wallpaper"));
 
             EnsureWorkerWZOrder();
+            placementTimer.Start();
         }
 
         private void EnsureWorkerWZOrder()
@@ -1295,6 +1365,8 @@ namespace Lively.Core
                 {
                     WallpaperChanged -= SetupDesktop_WallpaperChanged;
                     workerWHook?.Dispose();
+                    placementTimer.Stop();
+                    placementTimer.Tick -= CheckWallpaperPlacement;
                     screensaverIdleTimer?.Dispose();
                     CloseAllWallpapers(false);
                     RefreshDesktop();
